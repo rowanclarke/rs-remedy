@@ -1,0 +1,10 @@
+• 2e4f1d3c Semi-Group
+  • 47c21b25 :axiom: ·^A·Associativity· is defined as ·A·(forall! a,b,c in! S)((ab)c = a(bc))·
+  • a9010d1b :axiom: ·^B·Identity· is defined as ·A·(exists! e in! S)(forall! a in! S)(ea = a = ae)·
+    • 70af014a :theorem: Identity is ·A·unique·
+      • f901ba0c :proof:
+        Let ·B·e_1, e_2 in! S· be ·B·identity elements·
+        Then ·C·e_1 = e_1e_2· by @a9010d1b
+        And ·C·e_2 = e_1e_2· by @a9010d1b
+        So ·D·e_1 = e_2· by equality transitivity
+        So ·E·(forall! e_1, e_2 in! S)(e_1 = e_2)·
