@@ -4,12 +4,11 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use termion::{
-    async_stdin, clear,
+    clear,
     color::{Bg, Black, Fg, White},
-    cursor::{Goto, Hide, Restore, Save, Show},
+    cursor::{Restore, Save},
     event::{Event, Key},
-    input::{Events, TermRead},
-    raw::IntoRawMode,
+    input::{Events},
     style::Reset,
 };
 

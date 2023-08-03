@@ -1,9 +1,8 @@
-#![feature(absolute_path)]
 mod args;
 mod display;
 mod select;
 
-use args::{Args, Command, DeckAction, DeckCommand, DeckSaveAction, SessionAction, SessionCommand};
+use args::{Args, Command, DeckAction, DeckAddAction, DeckCommand, SessionAction, SessionCommand};
 use clap::Parser;
 use core::array;
 use display::DisplayCard;
@@ -18,7 +17,6 @@ use std::{
     env,
     fmt::Display,
     io::{stdin, stdout, Write},
-    path::absolute,
 };
 use strum::{Display, EnumIter, IntoEnumIterator};
 use termion::{
@@ -40,11 +38,12 @@ fn main() {
 
     match args.command {
         Command::Deck(DeckAction {
-            command: DeckCommand::Save(DeckSaveAction { path }),
+            command: DeckCommand::Add(DeckAddAction { paths }),
         }) => {
-            let path = absolute(&path).unwrap();
-            let location = workspace.relative(path);
-            Deck::parse(&workspace, &location).save(&workspace, &location);
+            for path in paths {
+                let location = workspace.components(path);
+                Deck::parse(&workspace, &location).save(&workspace, &location);
+            }
         }
         Command::Session(SessionAction {
             command: SessionCommand::Initialize,

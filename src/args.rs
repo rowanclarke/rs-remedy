@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 pub struct Args {
@@ -20,12 +21,13 @@ pub struct DeckAction {
 
 #[derive(Subcommand)]
 pub enum DeckCommand {
-    Save(DeckSaveAction),
+    Add(DeckAddAction),
 }
 
 #[derive(clap::Args)]
-pub struct DeckSaveAction {
-    pub path: String,
+pub struct DeckAddAction {
+    #[arg(required = true)]
+    pub paths: Vec<PathBuf>,
 }
 
 #[derive(clap::Args)]
