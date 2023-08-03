@@ -7,7 +7,7 @@ description = "Tool for thinking and learning"
 edition = "2021"
 repository = "https://github.com/rowanclarke/rs-remedy"
 readme = "README.md"
-keywords = ["cli", "learn", "revise", "think", "second-brain", "zettelkasten"]
+keywords = ["learn", "revise", "think", "second-brain", "zettelkasten"]
 
 [dependencies]
 remediate = "0.2.1"
