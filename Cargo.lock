@@ -571,9 +571,9 @@ dependencies = [
 
 [[package]]
 name = "remediate"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f4bf1910b435a9bf4335442944568dea0ae226c54de09dfad7d70347e4a0036"
+checksum = "cbd1c562b2c0af9d225ac11451afaec1213d3fd60ec543a346550be779dcab59"
 dependencies = [
  "bincode",
  "from-pest",
