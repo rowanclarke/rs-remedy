@@ -8,3 +8,5 @@ edition = "2021"
 [dependencies]
 remediate = "0.2.0"
 clap = { version = "4.3.3", features = ["derive"] }
+termion = "2.0.1"
+strum = { version = "0.25.0", features = ["derive"] }
