@@ -3,7 +3,6 @@
 # `remedy`
 
 [![crates.io](https://img.shields.io/crates/v/remedy.svg)](https://crates.io/crates/remedy)
-[![docs](https://docs.rs/remedy/badge.svg)](https://docs.rs/remedy)
 [![dependency status](https://deps.rs/repo/github/rowanclarke/rs-remedy/status.svg)](https://deps.rs/repo/github/rowanclarke/rs-remedy)
 [![build status](https://github.com/rowanclarke/rs-remedy/workflows/CI/badge.svg)](https://github.com/rowanclarke/rs-remedy/actions?workflow=CI)
 
