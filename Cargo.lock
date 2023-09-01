@@ -119,6 +119,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pest_vm"
+version = "2.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c67f9b4831ee5044773dcf8a30a84ed071db15c2c76c7a21cdee39749a328b0a"
+dependencies = [
+ "pest",
+ "pest_meta",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -142,6 +152,7 @@ version = "0.1.0"
 dependencies = [
  "pest",
  "pest_meta",
+ "pest_vm",
  "serde",
  "toml",
 ]
