@@ -1,64 +1,113 @@
-use pest_meta::parse_and_optimize;
-use pest_vm::Vm;
-use serde::Deserialize;
+mod profile;
+mod tokens;
+mod workspace;
+
+use profile::ProfileTokenizer;
 use std::{
-    fs::File,
-    io::Read,
-    path::{Path, PathBuf},
-    str::FromStr,
+    future::{ready, Future},
+    marker::PhantomData,
+    pin::Pin,
 };
-use toml::{from_str, Table};
+use tokens::Tokenizer;
+use tower_lsp::jsonrpc::Result;
+use tower_lsp::lsp_types::*;
+use tower_lsp::{Client, LanguageServer, LspService, Server};
 
-struct Workspace {
-    root: PathBuf,
+#[derive(Debug)]
+struct Backend<T, C> {
+    client: Client,
+    cache: C,
+    phantom: PhantomData<T>,
 }
 
-impl Workspace {
-    fn get_path<P: AsRef<Path>>(&self, relative: P) -> PathBuf {
-        PathBuf::from_iter([self.root.as_ref(), relative.as_ref()])
+const START: Range = Range {
+    start: Position {
+        line: 0,
+        character: 0,
+    },
+    end: Position {
+        line: 0,
+        character: 1,
+    },
+};
+
+impl<T, C> Backend<T, C> {
+    async fn send_root_diagnostic(&self, uri: Url, message: String) {
+        self.client
+            .publish_diagnostics(
+                uri,
+                vec![Diagnostic::new_with_code_number(
+                    START,
+                    DiagnosticSeverity::ERROR,
+                    0,
+                    None,
+                    message,
+                )],
+                None,
+            )
+            .await;
     }
 
-    fn get_meta<P: AsRef<Path>>(&self, relative: P) -> PathBuf {
-        PathBuf::from_iter([self.root.as_ref(), Path::new(".remedy"), relative.as_ref()])
+    async fn diagnose_workspace_folders(&self, uri: Url) -> Result<Option<WorkspaceFolder>> {
+        match self.client.workspace_folders().await {
+            Ok(Some(vec)) if vec.len() > 0 => Ok(Some(vec[0].clone())),
+            Ok(_) => {
+                self.send_root_diagnostic(uri, "Not in workspace".to_string())
+                    .await;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+#[tower_lsp::async_trait]
+impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        Ok(InitializeResult {
+            capabilities: ServerCapabilities {
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        change: Some(TextDocumentSyncKind::FULL),
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
     }
 
-    fn get_config(&self) -> Configuration {
-        let mut config = File::open(self.get_meta("config.toml")).expect("Error opening config");
-        let mut buffer = String::new();
-        config.read_to_string(&mut buffer).unwrap();
-        from_str::<Configuration>(&buffer).expect("Error parsing config")
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
+        if let Some(workspace) = self.diagnose_workspace_folders(uri.clone()).await.unwrap() {
+            match T::parse(
+                workspace
+                    .uri
+                    .to_file_path()
+                    .expect("Workspace is not in file scheme"),
+                params.content_changes[0].text.clone(),
+            ) {
+                Ok(_) => (),
+                Err(err) => self.send_root_diagnostic(uri, err.to_string()).await,
+            };
+        }
     }
 }
 
-#[derive(Deserialize, Debug)]
-struct Configuration {
-    profile: Vec<Profile>,
-}
+#[tokio::main]
+async fn main() {
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
 
-#[derive(Deserialize, Debug)]
-struct Profile {
-    grammar: PathBuf,
-    rule: String,
-}
-
-fn main() {
-    let workspace = Workspace {
-        root: PathBuf::from_str("/home/rowan/wkspc").unwrap(),
-    };
-    let config = workspace.get_config();
-    let profile = &config.profile[0];
-    let mut grammar =
-        File::open(workspace.get_meta(&profile.grammar)).expect("Error opening grammar");
-    let mut buffer = String::new();
-    grammar.read_to_string(&mut buffer).unwrap();
-    let (_, rules) = parse_and_optimize(&buffer).expect("Error parsing grammar");
-    let vm = Vm::new(rules);
-
-    let mut file = File::open(workspace.get_path("test.rem")).expect("Error opening file");
-    let mut buffer = String::new();
-    file.read_to_string(&mut buffer).unwrap();
-    let pairs = vm
-        .parse(&profile.rule, &buffer)
-        .expect("Error parsing file with grammar");
-    println!("{:#?}", pairs);
+    let (service, socket) = LspService::new(|client| Backend::<ProfileTokenizer, Option<()>> {
+        client,
+        cache: None,
+        phantom: PhantomData,
+    });
+    Server::new(stdin, stdout, socket).serve(service).await;
 }
