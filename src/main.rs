@@ -1,5 +1,3 @@
-mod register;
-
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
@@ -9,41 +7,69 @@ struct Backend {
     client: Client,
 }
 
+const START: Range = Range {
+    start: Position {
+        line: 0,
+        character: 0,
+    },
+    end: Position {
+        line: 0,
+        character: 1,
+    },
+};
+
+impl Backend {
+    async fn diagnose_workspace_folders(&self, uri: Url) -> Result<Option<WorkspaceFolder>> {
+        match self.client.workspace_folders().await {
+            Ok(Some(vec)) if vec.len() > 0 => Ok(Some(vec[0].clone())),
+            Ok(_) => {
+                self.client
+                    .publish_diagnostics(
+                        uri,
+                        vec![Diagnostic::new_with_code_number(
+                            START,
+                            DiagnosticSeverity::ERROR,
+                            0,
+                            None,
+                            "Not in workspace".to_string(),
+                        )],
+                        None,
+                    )
+                    .await;
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                completion_provider: Some(CompletionOptions::default()),
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        change: Some(TextDocumentSyncKind::FULL),
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
             },
             ..Default::default()
         })
     }
 
-    async fn initialized(&self, _: InitializedParams) {
-        self.client
-            .log_message(MessageType::INFO, "server initialized!")
-            .await;
-    }
-
     async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
 
-    async fn completion(&self, _: CompletionParams) -> Result<Option<CompletionResponse>> {
-        Ok(Some(CompletionResponse::Array(vec![
-            CompletionItem::new_simple("Hello".to_string(), "Some more other detail".to_string()),
-            CompletionItem::new_simple("Bye".to_string(), "More detail".to_string()),
-        ])))
-    }
-
-    async fn hover(&self, _: HoverParams) -> Result<Option<Hover>> {
-        Ok(Some(Hover {
-            contents: HoverContents::Scalar(MarkedString::String("You're hovering!".to_string())),
-            range: None,
-        }))
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        if let Some(workspace) = self
+            .diagnose_workspace_folders(params.text_document.uri)
+            .await
+            .unwrap()
+        {}
     }
 }
 
