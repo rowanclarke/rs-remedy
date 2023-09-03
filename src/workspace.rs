@@ -28,9 +28,9 @@ impl Workspace {
         &self,
         relative: P,
     ) -> Result<T> {
-        let mut config = File::open(self.get_meta(relative))?;
+        let mut meta = File::open(self.get_meta(relative))?;
         let mut buffer = String::new();
-        config.read_to_string(&mut buffer).unwrap();
+        meta.read_to_string(&mut buffer).unwrap();
         Ok(from_str::<T>(&buffer)?)
     }
 }

@@ -6,6 +6,7 @@ use profile::ProfileTokenizer;
 use std::{
     future::{ready, Future},
     marker::PhantomData,
+    path::PathBuf,
     pin::Pin,
 };
 use tokens::Tokenizer;
@@ -48,14 +49,10 @@ impl<T, C> Backend<T, C> {
             .await;
     }
 
-    async fn diagnose_workspace_folders(&self, uri: Url) -> Result<Option<WorkspaceFolder>> {
+    async fn workspace_folder(&self) -> Result<Option<WorkspaceFolder>> {
         match self.client.workspace_folders().await {
             Ok(Some(vec)) if vec.len() > 0 => Ok(Some(vec[0].clone())),
-            Ok(_) => {
-                self.send_root_diagnostic(uri, "Not in workspace".to_string())
-                    .await;
-                Ok(None)
-            }
+            Ok(_) => Ok(None),
             Err(e) => Err(e),
         }
     }
@@ -68,10 +65,22 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
-                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
+                            include_text: Some(true),
+                        })),
                         ..Default::default()
                     },
                 )),
+                // diagnostic_provider: Some(DiagnosticServerCapabilities::Options(
+                //     DiagnosticOptions {
+                //         identifier: None,
+                //         inter_file_dependencies: false,
+                //         workspace_diagnostics: false,
+                //         work_done_progress_options: WorkDoneProgressOptions {
+                //             work_done_progress: Some(false),
+                //         },
+                //     },
+                // )),
                 ..Default::default()
             },
             ..Default::default()
@@ -82,16 +91,23 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
         Ok(())
     }
 
-    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+    // async fn diagnostic(
+    //     &self,
+    //     params: DocumentDiagnosticParams,
+    // ) -> Result<DocumentDiagnosticReportResult> {
+    //     todo!()
+    // }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(workspace) = self.diagnose_workspace_folders(uri.clone()).await.unwrap() {
-            match T::parse(
-                workspace
-                    .uri
-                    .to_file_path()
-                    .expect("Workspace is not in file scheme"),
-                params.content_changes[0].text.clone(),
-            ) {
+        if let Some(workspace) = self
+            .workspace_folder()
+            .await
+            .ok()
+            .and_then(|w| w)
+            .and_then(|w| w.uri.to_file_path().ok())
+        {
+            match T::parse(workspace, params.text.expect("include text").clone()) {
                 Ok(_) => (),
                 Err(err) => self.send_root_diagnostic(uri, err.to_string()).await,
             };

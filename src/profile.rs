@@ -1,7 +1,4 @@
-use crate::{
-    tokens::Tokenizer,
-    workspace::{self, Workspace},
-};
+use crate::{tokens::Tokenizer, workspace::Workspace};
 
 use anyhow::{anyhow, Error};
 use pest_meta::parse_and_optimize;
