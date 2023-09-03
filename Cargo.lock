@@ -526,6 +526,7 @@ name = "remedy"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dashmap",
  "pest",
  "pest_meta",
  "pest_vm",
