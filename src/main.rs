@@ -1,19 +1,19 @@
+mod profile;
 mod tokens;
+mod workspace;
 
-use std::{
-    future::{ready, Future},
-    marker::PhantomData,
-    pin::Pin,
-};
-use tokens::{ProfileTokenizer, Tokenizer};
-use tower_lsp::jsonrpc::Result;
-use tower_lsp::lsp_types::*;
-use tower_lsp::{Client, LanguageServer, LspService, Server};
+use dashmap::DashMap;
+use profile::ProfileTokenizer;
+use std::{marker::PhantomData, sync::Mutex};
+use tokens::Tokenizer;
+use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspService, Server};
 
 #[derive(Debug)]
 struct Backend<T, C> {
     client: Client,
+    capabilities: Mutex<Vec<ClientCapabilities>>,
     cache: C,
+    errors: DashMap<Url, Vec<Diagnostic>>,
     phantom: PhantomData<T>,
 }
 
@@ -29,43 +29,33 @@ const START: Range = Range {
 };
 
 impl<T, C> Backend<T, C> {
-    async fn send_root_diagnostic(&self, uri: Url, message: String) {
-        self.client
-            .publish_diagnostics(
-                uri,
-                vec![Diagnostic::new_with_code_number(
-                    START,
-                    DiagnosticSeverity::ERROR,
-                    0,
-                    None,
-                    message,
-                )],
-                None,
-            )
-            .await;
-    }
-
-    async fn diagnose_workspace_folders(&self, uri: Url) -> Result<Option<WorkspaceFolder>> {
+    async fn workspace_folder(&self) -> Result<Option<WorkspaceFolder>> {
         match self.client.workspace_folders().await {
             Ok(Some(vec)) if vec.len() > 0 => Ok(Some(vec[0].clone())),
-            Ok(_) => {
-                self.send_root_diagnostic(uri, "Not in workspace".to_string())
-                    .await;
-                Ok(None)
-            }
+            Ok(_) => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    async fn publish_diagnostics(&self, uri: Url) {
+        let diagnostics = self.errors.get(&uri).map_or(vec![], |r| r.clone());
+        self.client
+            .publish_diagnostics(uri.clone(), diagnostics, None)
+            .await;
     }
 }
 
 #[tower_lsp::async_trait]
 impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let mut guard = self.capabilities.lock().unwrap();
+        guard.push(params.capabilities);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         change: Some(TextDocumentSyncKind::FULL),
+                        will_save: Some(true),
                         ..Default::default()
                     },
                 )),
@@ -75,27 +65,43 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
         })
     }
 
+    async fn initialized(&self, params: InitializedParams) {
+        self.client
+            .show_message(MessageType::ERROR, "Initialized")
+            .await;
+    }
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(workspace) = self.diagnose_workspace_folders(uri.clone()).await.unwrap() {
-            T::parse(
-                workspace
-                    .uri
-                    .to_file_path()
-                    .expect("Workspace is not in file scheme"),
-                params.content_changes[0].text.clone(),
-            )
-            .map_or_else::<Pin<Box<dyn Future<Output = ()> + Send>>, _, _>(
-                |err| Box::pin(self.send_root_diagnostic(uri, format!("{:#?}", err))),
-                |_| Box::pin(ready(())),
-            )
-            .await;
+        if let Some(workspace) = self
+            .workspace_folder()
+            .await
+            .ok()
+            .and_then(|w| w)
+            .and_then(|w| w.uri.to_file_path().ok())
+        {
+            match T::parse_text(workspace, params.content_changes[0].text.clone()) {
+                Ok(Ok(_)) => drop(self.errors.remove(&uri)),
+                Ok(Err(diagnostics)) => drop(self.errors.insert(uri.clone(), diagnostics)),
+                Err(err) => drop(self.errors.insert(
+                    uri.clone(),
+                    vec![Diagnostic {
+                        range: START,
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        message: err.to_string(),
+                        ..Default::default()
+                    }],
+                )),
+            };
         }
+        self.publish_diagnostics(uri).await;
     }
+
+    async fn will_save(&self, params: WillSaveTextDocumentParams) {}
 }
 
 #[tokio::main]
@@ -106,6 +112,8 @@ async fn main() {
     let (service, socket) = LspService::new(|client| Backend::<ProfileTokenizer, Option<()>> {
         client,
         cache: None,
+        capabilities: Mutex::new(vec![]),
+        errors: DashMap::new(),
         phantom: PhantomData,
     });
     Server::new(stdin, stdout, socket).serve(service).await;
