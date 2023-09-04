@@ -1,8 +1,9 @@
 use crate::{tokens::Tokenizer, workspace::Workspace};
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Error, Result};
+use dashmap::DashMap;
 use pest::error::LineColLocation;
-use pest_meta::parse_and_optimize;
+use pest_meta::{optimizer::OptimizedRule, parse_and_optimize};
 use pest_vm::Vm;
 use serde::Deserialize;
 use std::{fs::File, io::Read, path::PathBuf};
@@ -13,35 +14,69 @@ struct Configuration {
     profile: Vec<Profile>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone, Eq, Hash, PartialEq)]
 struct Profile {
+    name: String,
     grammar: PathBuf,
     rule: String,
 }
 
-pub struct ProfileTokenizer;
+pub struct ProfileTokenizer {
+    profiles: DashMap<PathBuf, Profile>,
+    parsers: DashMap<PathBuf, Vec<OptimizedRule>>,
+}
+
+impl ProfileTokenizer {
+    pub fn new() -> Self {
+        Self {
+            profiles: DashMap::new(),
+            parsers: DashMap::new(),
+        }
+    }
+
+    fn get_profile(&self, workspace: &Workspace, document: PathBuf) -> Result<Profile> {
+        if !self.profiles.contains_key(&document) {
+            let config = workspace.get_meta_deserialized::<Configuration, _>("config.toml")?;
+            self.profiles
+                .insert(document.clone(), config.profile[0].clone());
+        }
+        Ok(self.profiles.get(&document).unwrap().clone())
+    }
+
+    fn get_parser(&self, grammar: PathBuf) -> Result<Vec<OptimizedRule>> {
+        if !self.parsers.contains_key(&grammar) {
+            let text = self.get_text(grammar.clone())?;
+            let (_, rules) =
+                parse_and_optimize(&text).map_err(|err| anyhow!(err[0].to_string()))?;
+            self.parsers.insert(grammar.clone(), rules);
+        }
+        Ok(self.parsers.get(&grammar).unwrap().clone())
+    }
+}
 
 impl Tokenizer for ProfileTokenizer {
     type Tokens = ();
     type Error = Error;
 
-    fn get_text(document: PathBuf) -> Result<String, Self::Error> {
+    fn get_text(&self, document: PathBuf) -> Result<String> {
         let mut file = File::open(document)?;
         let mut text = String::new();
         file.read_to_string(&mut text)?;
         Ok(text)
     }
 
-    fn parse_text(workspace: PathBuf, text: String) -> Result<Result<(), Vec<Diagnostic>>, Error> {
+    fn parse_text(
+        &self,
+        workspace: PathBuf,
+        document: PathBuf,
+        text: String,
+    ) -> Result<Result<(), Vec<Diagnostic>>, Error> {
         let workspace = Workspace::new(workspace);
-        let config = workspace.get_meta_deserialized::<Configuration, _>("config.toml")?;
-        let profile = &config.profile[0];
-
-        let grammar = Self::get_text(workspace.get_meta(&profile.grammar))?;
-        let (_, rules) = parse_and_optimize(&grammar).map_err(|err| anyhow!(err[0].to_string()))?;
-        let vm = Vm::new(rules);
-
+        let profile = self.get_profile(&workspace, document)?;
+        let grammar = workspace.get_meta(&profile.grammar);
+        let vm = Vm::new(self.get_parser(grammar)?);
         let pairs = vm.parse(&profile.rule, &text);
+
         Ok(match pairs {
             Ok(_) => Ok(()),
             Err(err) => Err(vec![Diagnostic {

@@ -11,9 +11,9 @@ use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspServic
 #[derive(Debug)]
 struct Backend<T, C> {
     client: Client,
+    tokenizer: T,
     cache: C,
     errors: DashMap<Url, Vec<Diagnostic>>,
-    phantom: PhantomData<T>,
 }
 
 const START: Range = Range {
@@ -74,14 +74,19 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
-        if let Some(workspace) = self
-            .workspace_folder()
-            .await
-            .ok()
-            .and_then(|w| w)
-            .and_then(|w| w.uri.to_file_path().ok())
-        {
-            match T::parse_text(workspace, params.content_changes[0].text.clone()) {
+        if let (Some(workspace), Some(document)) = (
+            self.workspace_folder()
+                .await
+                .ok()
+                .and_then(|w| w)
+                .and_then(|w| w.uri.to_file_path().ok()),
+            uri.clone().to_file_path().ok(),
+        ) {
+            match self.tokenizer.parse_text(
+                workspace,
+                document,
+                params.content_changes[0].text.clone(),
+            ) {
                 Ok(Ok(_)) => drop(self.errors.remove(&uri)),
                 Ok(Err(diagnostics)) => drop(self.errors.insert(uri.clone(), diagnostics)),
                 Err(err) => drop(self.errors.insert(
@@ -106,11 +111,11 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(|client| Backend::<ProfileTokenizer, Option<()>> {
+    let (service, socket) = LspService::new(|client| Backend {
         client,
-        cache: None,
+        cache: Some(()),
+        tokenizer: ProfileTokenizer::new(),
         errors: DashMap::new(),
-        phantom: PhantomData,
     });
     Server::new(stdin, stdout, socket).serve(service).await;
 }
