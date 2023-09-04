@@ -11,7 +11,6 @@ use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspServic
 #[derive(Debug)]
 struct Backend<T, C> {
     client: Client,
-    capabilities: Mutex<Vec<ClientCapabilities>>,
     cache: C,
     errors: DashMap<Url, Vec<Diagnostic>>,
     phantom: PhantomData<T>,
@@ -48,8 +47,6 @@ impl<T, C> Backend<T, C> {
 #[tower_lsp::async_trait]
 impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let mut guard = self.capabilities.lock().unwrap();
-        guard.push(params.capabilities);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -112,7 +109,6 @@ async fn main() {
     let (service, socket) = LspService::new(|client| Backend::<ProfileTokenizer, Option<()>> {
         client,
         cache: None,
-        capabilities: Mutex::new(vec![]),
         errors: DashMap::new(),
         phantom: PhantomData,
     });
