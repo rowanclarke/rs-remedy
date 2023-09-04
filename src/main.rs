@@ -4,19 +4,14 @@ mod workspace;
 
 use dashmap::DashMap;
 use profile::ProfileTokenizer;
-use std::{
-    fmt::format,
-    future::{ready, Future},
-    marker::PhantomData,
-    path::PathBuf,
-    pin::Pin,
-};
+use std::{marker::PhantomData, sync::Mutex};
 use tokens::Tokenizer;
 use tower_lsp::{jsonrpc::Result, lsp_types::*, Client, LanguageServer, LspService, Server};
 
 #[derive(Debug)]
 struct Backend<T, C> {
     client: Client,
+    capabilities: Mutex<Vec<ClientCapabilities>>,
     cache: C,
     errors: DashMap<Url, Vec<Diagnostic>>,
     phantom: PhantomData<T>,
@@ -53,17 +48,17 @@ impl<T, C> Backend<T, C> {
 #[tower_lsp::async_trait]
 impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        let mut guard = self.capabilities.lock().unwrap();
+        guard.push(params.capabilities);
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
-                        save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                            include_text: Some(true),
-                        })),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        will_save: Some(true),
                         ..Default::default()
                     },
                 )),
-
                 ..Default::default()
             },
             ..Default::default()
@@ -80,7 +75,7 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
         Ok(())
     }
 
-    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = params.text_document.uri;
         if let Some(workspace) = self
             .workspace_folder()
@@ -89,8 +84,9 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
             .and_then(|w| w)
             .and_then(|w| w.uri.to_file_path().ok())
         {
-            match T::parse(workspace, params.text.expect("include text").clone()) {
-                Ok(_) => drop(self.errors.remove(&uri)),
+            match T::parse_text(workspace, params.content_changes[0].text.clone()) {
+                Ok(Ok(_)) => drop(self.errors.remove(&uri)),
+                Ok(Err(diagnostics)) => drop(self.errors.insert(uri.clone(), diagnostics)),
                 Err(err) => drop(self.errors.insert(
                     uri.clone(),
                     vec![Diagnostic {
@@ -104,6 +100,8 @@ impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
         }
         self.publish_diagnostics(uri).await;
     }
+
+    async fn will_save(&self, params: WillSaveTextDocumentParams) {}
 }
 
 #[tokio::main]
@@ -114,6 +112,7 @@ async fn main() {
     let (service, socket) = LspService::new(|client| Backend::<ProfileTokenizer, Option<()>> {
         client,
         cache: None,
+        capabilities: Mutex::new(vec![]),
         errors: DashMap::new(),
         phantom: PhantomData,
     });
