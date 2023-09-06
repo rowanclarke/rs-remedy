@@ -55,7 +55,7 @@ impl ProfileTokenizer {
 }
 
 impl Tokenizer for ProfileTokenizer {
-    type Tokens = ();
+    type Output = ();
     type Error = Error;
 
     fn get_text(&self, document: PathBuf) -> Result<String> {
@@ -70,7 +70,7 @@ impl Tokenizer for ProfileTokenizer {
         workspace: PathBuf,
         document: PathBuf,
         text: String,
-    ) -> Result<Result<(), Vec<Diagnostic>>, Error> {
+    ) -> Result<Result<Self::Output, Vec<Diagnostic>>, Self::Error> {
         let workspace = Workspace::new(workspace);
         let profile = self.get_profile(&workspace, document)?;
         let grammar = workspace.get_meta(&profile.grammar);

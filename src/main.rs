@@ -1,7 +1,9 @@
+mod cache;
 mod profile;
 mod tokens;
 mod workspace;
 
+use cache::Cache;
 use dashmap::DashMap;
 use profile::ProfileTokenizer;
 use std::{marker::PhantomData, sync::Mutex};
@@ -45,7 +47,7 @@ impl<T, C> Backend<T, C> {
 }
 
 #[tower_lsp::async_trait]
-impl<T: Tokenizer, C: Sync + Send + 'static> LanguageServer for Backend<T, C> {
+impl<T: Tokenizer, C: Cache> LanguageServer for Backend<T, C> {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -113,7 +115,7 @@ async fn main() {
 
     let (service, socket) = LspService::new(|client| Backend {
         client,
-        cache: Some(()),
+        cache: (),
         tokenizer: ProfileTokenizer::new(),
         errors: DashMap::new(),
     });
